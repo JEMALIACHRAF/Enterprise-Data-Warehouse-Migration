@@ -1,0 +1,157 @@
+# =============================================================================
+# pyproject.toml — Oracle to Snowflake Migration Pipeline
+# =============================================================================
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "oracle-snowflake-migration"
+version = "1.0.0"
+description = "Production-grade Oracle to Snowflake data warehouse migration pipeline"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["data-engineering", "pyspark", "snowflake", "oracle", "etl", "migration"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Database",
+]
+dependencies = [
+    "pyspark==3.4.1",
+    "snowflake-connector-python==3.6.0",
+    "google-cloud-storage==2.14.0",
+    "google-cloud-secret-manager==2.18.0",
+    "pyyaml==6.0.1",
+    "requests==2.31.0",
+    "python-dotenv==1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==7.4.4",
+    "pytest-cov==4.1.0",
+    "ruff==0.1.9",
+    "mypy==1.8.0",
+    "jaydebeapi==1.2.3",
+    "JPype1==1.5.0",
+    "bandit==1.7.7",
+]
+
+# =============================================================================
+# Ruff — linter and formatter
+# =============================================================================
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [
+    "drivers/",
+    ".venv/",
+    "dist/",
+    "build/",
+    "__pycache__",
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # function call in default argument
+    "UP007",  # X | Y union syntax — keep Optional for Spark compatibility
+    "E712",   # comparison to True — Spark filter syntax requires == True
+    "F811",   # redefinition — caused by dotenv injection pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",   # assert allowed in tests
+    "F401",   # unused imports allowed in test fixtures
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+# =============================================================================
+# mypy — static type checker
+# =============================================================================
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_ignores = true
+no_implicit_optional = true
+strict = false
+exclude = [
+    "tests/",
+    "drivers/",
+    "scripts/",
+]
+
+# =============================================================================
+# pytest
+# =============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: fast tests with no external dependencies (Spark local mode only)",
+    "integration: tests requiring real Oracle, Snowflake, and GCS connections",
+]
+# Default: run unit tests only
+# To run integration tests: pytest -m integration
+addopts = "-m 'not integration' --tb=short"
+log_cli = false
+log_level = "WARNING"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+# =============================================================================
+# Coverage
+# =============================================================================
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "src/utils/spark_session.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true
+skip_covered = false
+fail_under = 70
+
+# =============================================================================
+# bandit — security scanner
+# =============================================================================
+
+[tool.bandit]
+exclude_dirs = ["tests", "drivers", ".venv"]
+skips = [
+    "B101",   # assert used — acceptable in non-security code
+    "B603",   # subprocess — used for Docker checks in tests only
+    "B607",   # partial path — controlled environment
+]

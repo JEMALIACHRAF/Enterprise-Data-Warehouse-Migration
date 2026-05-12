@@ -1,0 +1,399 @@
+# =============================================================================
+# CI/CD Pipeline — Oracle to Snowflake Migration
+#
+# Triggers:
+#   Pull request to main or develop  ->  lint + unit tests
+#   Push to main                     ->  lint + tests + build Docker + push
+#   Manual dispatch                  ->  deploy to target environment
+# =============================================================================
+
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, prod]
+      batch_date:
+        description: "Batch date YYYY-MM-DD (leave empty for today)"
+        required: false
+
+env:
+  PROJECT_ID:   ${{ secrets.GCP_PROJECT_ID }}
+  REGION:       europe-west1
+  REGISTRY:     europe-west1-docker.pkg.dev
+  IMAGE_NAME:   migration-spark
+  REPO:         data-platform
+  GKE_CLUSTER:  data-platform-prod
+  GKE_ZONE:     europe-west1-b
+  PYTHON_VERSION: "3.10"
+
+# Cancel in-progress runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # JOB 1 — Lint
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff==0.1.9
+
+      - name: Check code style
+        run: ruff check src/ tests/
+
+      - name: Check formatting
+        run: ruff format --check src/ tests/
+
+  # ---------------------------------------------------------------------------
+  # JOB 2 — Unit Tests
+  # Runs entirely locally — no Oracle, Snowflake, or GCS required.
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: "11"
+          distribution: temurin
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyspark==3.4.1 pytest==7.4.4 pytest-cov==4.1.0
+
+      - name: Run unit tests
+        env:
+          PYSPARK_PYTHON: python
+          PYSPARK_DRIVER_PYTHON: python
+        run: |
+          python -m pytest tests/unit/ \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junitxml=test-results.xml \
+            -v
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: test-results.xml
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Test Results
+          path: test-results.xml
+          reporter: java-junit
+
+  # ---------------------------------------------------------------------------
+  # JOB 3 — Security scan
+  # ---------------------------------------------------------------------------
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run security scan
+        run: |
+          bandit -r src/ \
+            --skip B101,B603,B607 \
+            --severity-level medium \
+            --confidence-level medium \
+            -f txt
+
+  # ---------------------------------------------------------------------------
+  # JOB 4 — Build and push Docker image
+  # Only runs on push to main after tests pass.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [unit-tests, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=build-${{ github.run_number }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:cache,mode=max
+
+      - name: Export image digest
+        run: |
+          echo "Image built: ${{ steps.meta.outputs.tags }}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+
+  # ---------------------------------------------------------------------------
+  # JOB 5 — Deploy to Staging
+  # Automated deployment on every push to main.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    environment: staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}-staging
+          location: ${{ env.GKE_ZONE }}
+
+      - name: Update image in CronJob
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          kubectl set image cronjob/oracle-snowflake-migration \
+            spark-driver=${IMAGE} \
+            -n data-engineering
+          echo "Deployed image: ${IMAGE}"
+
+      - name: Trigger validation job
+        run: |
+          JOB_NAME="validation-${{ github.run_number }}"
+          kubectl create job \
+            --from=cronjob/oracle-snowflake-migration \
+            ${JOB_NAME} \
+            -n data-engineering
+
+      - name: Wait for validation job
+        run: |
+          kubectl wait job/validation-${{ github.run_number }} \
+            --for=condition=complete \
+            --timeout=3600s \
+            -n data-engineering
+
+      - name: Check job logs on failure
+        if: failure()
+        run: |
+          kubectl logs \
+            -l job-name=validation-${{ github.run_number }} \
+            -n data-engineering \
+            --tail=100
+
+  # ---------------------------------------------------------------------------
+  # JOB 6 — Deploy to Production
+  # Requires manual approval via GitHub environment protection rules.
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/ -n data-engineering
+
+      - name: Update image in CronJob
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          kubectl set image cronjob/oracle-snowflake-migration \
+            spark-driver=${IMAGE} \
+            -n data-engineering
+          echo "Production deployment complete: ${IMAGE}"
+
+      - name: Verify CronJob
+        run: |
+          kubectl get cronjob oracle-snowflake-migration \
+            -n data-engineering \
+            -o wide
+
+      - name: Notify Slack on success
+        if: success()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "Production deployment successful",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*oracle-snowflake-migration* deployed to production\nCommit: `${{ github.sha }}`\nAuthor: ${{ github.actor }}\nBuild: #${{ github.run_number }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "Production deployment FAILED — oracle-snowflake-migration build #${{ github.run_number }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ---------------------------------------------------------------------------
+  # JOB 7 — Manual deployment (workflow_dispatch)
+  # Allows deploying a specific commit to staging or prod on demand.
+  # ---------------------------------------------------------------------------
+  manual-deploy:
+    name: Manual Deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: >-
+            ${{ github.event.inputs.environment == 'prod'
+              && env.GKE_CLUSTER
+              || format('{0}-staging', env.GKE_CLUSTER) }}
+          location: ${{ env.GKE_ZONE }}
+
+      - name: Trigger manual batch job
+        run: |
+          BATCH_DATE="${{ github.event.inputs.batch_date }}"
+          if [ -z "$BATCH_DATE" ]; then
+            BATCH_DATE=$(date -u +%Y-%m-%d)
+          fi
+
+          JOB_NAME="manual-$(date +%Y%m%d-%H%M%S)"
+
+          kubectl create job \
+            --from=cronjob/oracle-snowflake-migration \
+            ${JOB_NAME} \
+            -n data-engineering \
+            --overrides="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"spark-driver\",\"args\":[\"--env\",\"${{ github.event.inputs.environment }}\",\"--batch-date\",\"${BATCH_DATE}\"]}]}}}}"
+
+          echo "Triggered job: ${JOB_NAME} for batch date: ${BATCH_DATE}"
+
+          kubectl wait job/${JOB_NAME} \
+            --for=condition=complete \
+            --timeout=25200s \
+            -n data-engineering

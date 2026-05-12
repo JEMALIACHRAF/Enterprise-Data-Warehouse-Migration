@@ -1,0 +1,270 @@
+# =============================================================================
+# Kubernetes — GKE Deployment for nightly Spark batch jobs
+# oracle-to-snowflake-migration
+# =============================================================================
+#
+# Architecture:
+#   - CronJob triggers nightly at 01:00 UTC
+#   - Spark driver runs inside the k8s pod
+#   - Executors are spawned dynamically (spark.dynamicAllocation)
+#   - Karpenter handles node autoscaling (spot instances for executors)
+#   - Secrets injected from GCP Secret Manager via Workload Identity
+#
+# Apply with:
+#   kubectl apply -f k8s/
+# =============================================================================
+
+---
+# ─── Namespace ───────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-engineering
+  labels:
+    team: data-platform
+
+---
+# ─── Service Account (Workload Identity → GCP SA) ────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-migration-sa
+  namespace: data-engineering
+  annotations:
+    # Workload Identity: maps to GCP SA for GCS + Secret Manager access
+    iam.gke.io/gcp-service-account: spark-migration@PROJECT_ID.iam.gserviceaccount.com
+
+---
+# ─── RBAC — Spark driver needs to create/delete executor pods ────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-role
+  namespace: data-engineering
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, configmaps]
+    verbs: [create, get, list, watch, delete, patch, update]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get, list]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-role-binding
+  namespace: data-engineering
+subjects:
+  - kind: ServiceAccount
+    name: spark-migration-sa
+    namespace: data-engineering
+roleRef:
+  kind: Role
+  name: spark-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ─── ConfigMap — pipeline config (non-sensitive) ─────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: data-engineering
+data:
+  ENV: "prod"
+  GCS_BUCKET: "your-gcs-bucket-prod"
+  SPARK_DRIVER_MEMORY: "8g"
+  SPARK_EXECUTOR_MEMORY: "28g"
+  SPARK_MAX_EXECUTORS: "120"
+
+---
+# ─── Secret reference (values stored in GCP Secret Manager) ──────────────────
+# Secrets are mounted as env vars via the External Secrets Operator
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: migration-secrets
+  namespace: data-engineering
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: gcp-secret-store
+    kind: ClusterSecretStore
+  target:
+    name: migration-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: ORACLE_PASSWORD
+      remoteRef:
+        key: oracle-dwh-password
+    - secretKey: SNOWFLAKE_PRIVATE_KEY_PEM
+      remoteRef:
+        key: snowflake-private-key-pem
+    - secretKey: SLACK_WEBHOOK_URL
+      remoteRef:
+        key: slack-webhook-data-alerts
+
+---
+# ─── CronJob — Nightly batch (01:00 UTC) ─────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: oracle-snowflake-migration
+  namespace: data-engineering
+  labels:
+    app: oracle-snowflake-migration
+    team: data-platform
+    env: prod
+spec:
+  schedule: "0 1 * * *"          # 01:00 UTC daily
+  concurrencyPolicy: Forbid       # Prevent overlapping runs
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1             # 1 retry on failure
+      activeDeadlineSeconds: 25200  # Hard timeout: 7 hours
+      template:
+        metadata:
+          labels:
+            app: oracle-snowflake-migration
+            # Karpenter node selector for cost optimization
+            karpenter.sh/capacity-type: spot
+        spec:
+          serviceAccountName: spark-migration-sa
+          restartPolicy: OnFailure
+
+          # ── Init container: pull latest config from GCS ──────────────
+          initContainers:
+            - name: config-puller
+              image: google/cloud-sdk:alpine
+              command:
+                - sh
+                - -c
+                - gsutil cp gs://your-gcs-bucket-prod/config/pipeline_config.yaml /mnt/config/
+              volumeMounts:
+                - name: config-volume
+                  mountPath: /mnt/config
+
+          # ── Main container: Spark driver ──────────────────────────────
+          containers:
+            - name: spark-driver
+              image: europe-west1-docker.pkg.dev/PROJECT_ID/data-platform/migration-spark:latest
+              imagePullPolicy: Always
+              command:
+                - spark-submit
+                - --master
+                - k8s://https://KUBERNETES_API_SERVER
+                - --deploy-mode
+                - client
+                - --conf
+                - spark.kubernetes.namespace=data-engineering
+                - --conf
+                - spark.kubernetes.container.image=europe-west1-docker.pkg.dev/PROJECT_ID/data-platform/migration-spark:latest
+                - --conf
+                - spark.kubernetes.serviceAccountName=spark-migration-sa
+                - --conf
+                - spark.kubernetes.executor.annotation.karpenter.sh/capacity-type=spot
+                - --conf
+                - spark.dynamicAllocation.enabled=true
+                - --conf
+                - spark.dynamicAllocation.shuffleTracking.enabled=true
+                - --conf
+                - spark.dynamicAllocation.minExecutors=5
+                - --conf
+                - spark.dynamicAllocation.maxExecutors=120
+                - --conf
+                - spark.executor.instances=20
+                - --conf
+                - spark.executor.memory=28g
+                - --conf
+                - spark.executor.cores=4
+                - --conf
+                - spark.driver.memory=8g
+                - /app/src/main.py
+                - --env
+                - prod
+                - --batch-date
+                - "$(date -u +%Y-%m-%d)"
+
+              envFrom:
+                - configMapRef:
+                    name: pipeline-config
+                - secretRef:
+                    name: migration-secrets
+
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: "10Gi"
+                limits:
+                  cpu: "8"
+                  memory: "12Gi"
+
+              volumeMounts:
+                - name: config-volume
+                  mountPath: /app/config
+
+          volumes:
+            - name: config-volume
+              emptyDir: {}
+
+          # ── Node affinity: driver on on-demand, executors on spot ─────
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: cloud.google.com/gke-nodepool
+                        operator: In
+                        values:
+                          - spark-driver-pool
+
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: spark-driver
+              effect: NoSchedule
+
+---
+# ─── HorizontalPodAutoscaler for Spark executor node pool ────────────────────
+# (Karpenter handles node-level scaling; this HPA covers pod-level)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: spark-executor-hpa
+  namespace: data-engineering
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: spark-executor-pool
+  minReplicas: 5
+  maxReplicas: 120
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 20
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 10
+          periodSeconds: 120

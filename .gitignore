@@ -1,0 +1,141 @@
+# =============================================================================
+# .gitignore — Oracle to Snowflake Migration Pipeline
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Secrets & credentials — NEVER commit these
+# -----------------------------------------------------------------------------
+.env
+*.pem
+*.key
+*.p8
+*.json.key
+*service-account*.json
+*credentials*.json
+config/pipeline_config.yaml
+
+# -----------------------------------------------------------------------------
+# Oracle JDBC driver — Oracle license prohibits redistribution
+# Download manually: see README Getting Started section
+# -----------------------------------------------------------------------------
+drivers/
+*.jar
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+env/
+venv/
+.venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution / packaging
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+wheels/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage/
+htmlcov/
+nosetests.xml
+test-results.xml
+.tox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Linting
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# -----------------------------------------------------------------------------
+# Spark & Hadoop
+# -----------------------------------------------------------------------------
+derby.log
+metastore_db/
+spark-warehouse/
+spark-events/
+*.log
+
+# Spark temp files (Windows)
+AppData/Local/Temp/spark-*/
+
+# Hadoop winutils (Windows dev only — not needed in CI/prod)
+hadoop/
+
+# Ivy cache (Spark dependency downloads)
+# Uncomment if you want to exclude the local JAR cache:
+# .ivy2/
+
+# -----------------------------------------------------------------------------
+# GCS / Cloud local artifacts
+# -----------------------------------------------------------------------------
+gcs_local/
+*.parquet
+*.snappy.parquet
+
+# -----------------------------------------------------------------------------
+# IDE & editors
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# OS
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+.dockerignore.local
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.bak
+*.swp
+*.swo
+*.tmp
+.cache/

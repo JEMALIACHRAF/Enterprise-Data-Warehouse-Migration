@@ -1,0 +1,53 @@
+# pipeline_config.yaml.example
+# Copy to pipeline_config.yaml and fill in your values.
+# ⚠️  NEVER commit pipeline_config.yaml (it's in .gitignore).
+# All secrets (passwords, keys) must come from environment variables.
+
+environments:
+
+  dev:
+    gcs_bucket: your-gcs-bucket-dev
+    oracle:
+      host: oracle-dev.internal
+      port: 1521
+      service_name: ERPDEV
+      user: migration_reader
+      # password → ORACLE_PASSWORD env var
+    snowflake:
+      account: your-account.eu-west-1
+      user: migration_svc
+      database: FINANCE_DWH_DEV
+      schema: CORE
+      warehouse: MIGRATION_WH_DEV
+      role: DATA_ENGINEER
+      # private_key_pem → SNOWFLAKE_PRIVATE_KEY_PEM env var
+
+  staging:
+    gcs_bucket: your-gcs-bucket-staging
+    oracle:
+      host: oracle-staging.internal
+      port: 1521
+      service_name: ERPSTG
+      user: migration_reader
+    snowflake:
+      account: your-account.eu-west-1
+      user: migration_svc
+      database: FINANCE_DWH_STAGING
+      schema: CORE
+      warehouse: MIGRATION_WH_STG
+      role: DATA_ENGINEER
+
+  prod:
+    gcs_bucket: your-gcs-bucket-prod
+    oracle:
+      host: oracle-prod.internal
+      port: 1521
+      service_name: ERPPRD
+      user: migration_reader
+    snowflake:
+      account: your-account.eu-west-1
+      user: migration_svc
+      database: FINANCE_DWH
+      schema: CORE
+      warehouse: MIGRATION_WH_PROD
+      role: DATA_ENGINEER
