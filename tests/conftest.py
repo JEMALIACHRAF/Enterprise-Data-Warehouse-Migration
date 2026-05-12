@@ -13,8 +13,7 @@ from pyspark.sql import SparkSession
 def spark():
     """SparkSession partagée pour tous les tests de la session."""
     spark = (
-        SparkSession.builder
-        .master("local[2]")
+        SparkSession.builder.master("local[2]")
         .appName("migration-tests")
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.ui.enabled", "false")

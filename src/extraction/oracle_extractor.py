@@ -57,9 +57,7 @@ class OracleExtractor:
 
     def _build_jdbc_url(self) -> str:
         cfg = self.config.oracle
-        return (
-            f"jdbc:oracle:thin:@//{cfg.host}:{cfg.port}/{cfg.service_name}"
-        )
+        return f"jdbc:oracle:thin:@//{cfg.host}:{cfg.port}/{cfg.service_name}"
 
     def _jdbc_options(self, extra: Optional[dict] = None) -> dict:
         opts = {
@@ -99,7 +97,9 @@ class OracleExtractor:
             ExtractionResult with metadata about the extraction.
         """
         extraction_start = datetime.utcnow()
-        batch_id = f"{table_name}_{batch_date.strftime('%Y%m%d')}_{extraction_start.strftime('%H%M%S')}"
+        batch_id = (
+            f"{table_name}_{batch_date.strftime('%Y%m%d')}_{extraction_start.strftime('%H%M%S')}"
+        )
 
         logger.info(f"[{batch_id}] Starting extraction of {table_name}")
 
@@ -107,9 +107,7 @@ class OracleExtractor:
         query = self._build_query(table_name, watermark_column, batch_date)
 
         # Compute partition bounds for parallel read
-        lower_bound, upper_bound = self._compute_partition_bounds(
-            query, partition_column
-        )
+        lower_bound, upper_bound = self._compute_partition_bounds(query, partition_column)
 
         logger.info(
             f"[{batch_id}] Partition bounds: [{lower_bound}, {upper_bound}] "
@@ -134,18 +132,18 @@ class OracleExtractor:
         df: DataFrame = reader.load()
 
         # Add audit columns
-        df = df.withColumn("_extracted_at", F.current_timestamp()) \
-               .withColumn("_batch_id", F.lit(batch_id)) \
-               .withColumn("_source_table", F.lit(table_name))
+        df = (
+            df.withColumn("_extracted_at", F.current_timestamp())
+            .withColumn("_batch_id", F.lit(batch_id))
+            .withColumn("_source_table", F.lit(table_name))
+        )
 
         row_count = df.count()
         logger.info(f"[{batch_id}] Extracted {row_count:,} rows from {table_name}")
 
         # Write to GCS landing zone (Parquet, snappy compressed)
         gcs_path = self._build_gcs_path(table_name, batch_date)
-        df.write.mode("overwrite") \
-                .option("compression", "snappy") \
-                .parquet(gcs_path)
+        df.write.mode("overwrite").option("compression", "snappy").parquet(gcs_path)
 
         logger.info(f"[{batch_id}] Written to GCS: {gcs_path}")
 
@@ -179,13 +177,10 @@ class OracleExtractor:
             f"FROM {table_name}"
         )
 
-    def _compute_partition_bounds(
-        self, query: str, partition_column: str
-    ) -> tuple[int, int]:
+    def _compute_partition_bounds(self, query: str, partition_column: str) -> tuple[int, int]:
         """Fetch min/max of partition column to define JDBC split bounds."""
         bounds_query = (
-            f"SELECT MIN({partition_column}), MAX({partition_column}) "
-            f"FROM ({query}) TMP"
+            f"SELECT MIN({partition_column}), MAX({partition_column}) " f"FROM ({query}) TMP"
         )
         row = (
             self.spark.read.format("jdbc")

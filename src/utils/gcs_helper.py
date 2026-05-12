@@ -19,8 +19,8 @@ class GCSHelper:
 
     def __init__(self, bucket_name: str):
         self.bucket_name = bucket_name
-        self.client      = storage.Client()
-        self.bucket      = self.client.bucket(bucket_name)
+        self.client = storage.Client()
+        self.bucket = self.client.bucket(bucket_name)
         logger.info(f"GCSHelper initialisé — bucket: gs://{bucket_name}")
 
     # ── Upload ────────────────────────────────────────────────────────────────

@@ -91,6 +91,7 @@ def load_config(env: str) -> PipelineConfig:
 
 # ─── retry.py ────────────────────────────────────────────────────────────────
 
+
 def retry_with_backoff(max_retries: int = 3, base_delay: float = 10.0, backoff: float = 2.0):
     """
     Decorator: retries the decorated function up to `max_retries` times
@@ -105,6 +106,7 @@ def retry_with_backoff(max_retries: int = 3, base_delay: float = 10.0, backoff: 
         @retry_with_backoff(max_retries=3, base_delay=30)
         def my_flaky_function(): ...
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -127,5 +129,7 @@ def retry_with_backoff(max_retries: int = 3, base_delay: float = 10.0, backoff: 
                     time.sleep(delay)
                     delay *= backoff
             raise last_exc
+
         return wrapper
+
     return decorator

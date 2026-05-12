@@ -36,8 +36,7 @@ class SparkTransformer:
     def transform_dim_continent(self, raw_df: DataFrame) -> DataFrame:
         logger.info("Transforming dim_continent...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("CONTINENT_CD").cast(StringType()).alias("continent_code"),
                 F.initcap(F.col("CONTINENT_NM")).alias("continent_name"),
             )
@@ -47,13 +46,10 @@ class SparkTransformer:
             .withColumn("updated_at", F.current_timestamp())
         )
 
-    def transform_dim_country(
-        self, raw_df: DataFrame, dim_continent: DataFrame
-    ) -> DataFrame:
+    def transform_dim_country(self, raw_df: DataFrame, dim_continent: DataFrame) -> DataFrame:
         logger.info("Transforming dim_country...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("COUNTRY_CD").cast(StringType()).alias("country_code"),
                 F.col("COUNTRY_NM").alias("country_name"),
                 F.col("CONTINENT_CD").alias("continent_code"),
@@ -71,13 +67,10 @@ class SparkTransformer:
             .dropDuplicates(["country_code"])
         )
 
-    def transform_dim_region(
-        self, raw_df: DataFrame, dim_country: DataFrame
-    ) -> DataFrame:
+    def transform_dim_region(self, raw_df: DataFrame, dim_country: DataFrame) -> DataFrame:
         logger.info("Transforming dim_region...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("REGION_CD").alias("region_code"),
                 F.col("REGION_NM").alias("region_name"),
                 F.col("COUNTRY_CD").alias("country_code"),
@@ -92,13 +85,10 @@ class SparkTransformer:
             .dropDuplicates(["region_code"])
         )
 
-    def transform_dim_city(
-        self, raw_df: DataFrame, dim_region: DataFrame
-    ) -> DataFrame:
+    def transform_dim_city(self, raw_df: DataFrame, dim_region: DataFrame) -> DataFrame:
         logger.info("Transforming dim_city...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("CITY_NM").alias("city_name"),
                 F.col("POSTAL_CD").alias("postal_code"),
                 F.col("REGION_CD").alias("region_code"),
@@ -120,8 +110,7 @@ class SparkTransformer:
     def transform_dim_product_line(self, raw_df: DataFrame) -> DataFrame:
         logger.info("Transforming dim_product_line...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("PROD_LINE_CD").cast(StringType()).alias("product_line_code"),
                 F.col("PROD_LINE_NM").alias("product_line_name"),
                 F.col("BUSINESS_UNIT").alias("business_unit"),
@@ -137,8 +126,7 @@ class SparkTransformer:
     ) -> DataFrame:
         logger.info("Transforming dim_product_family...")
         return (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("FAMILY_CD").cast(StringType()).alias("product_family_code"),
                 F.col("FAMILY_NM").alias("product_family_name"),
                 F.col("PROD_LINE_CD").alias("product_line_code"),
@@ -170,8 +158,7 @@ class SparkTransformer:
         logger.info("Transforming dim_customer (SCD Type 2)...")
 
         staged = (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("CUST_ID").cast(StringType()).alias("customer_bk"),
                 F.col("CUST_NM").alias("customer_name"),
                 F.col("CUST_TYPE").alias("customer_type"),
@@ -194,8 +181,8 @@ class SparkTransformer:
             existing_dim.filter(F.col("is_current") == True)
             .join(staged, on="customer_bk", how="inner")
             .filter(
-                (existing_dim["customer_name"] != staged["customer_name"]) |
-                (existing_dim["kyc_status"]    != staged["kyc_status"])
+                (existing_dim["customer_name"] != staged["customer_name"])
+                | (existing_dim["kyc_status"] != staged["kyc_status"])
             )
             .select(existing_dim["customer_bk"])
         )
@@ -207,16 +194,17 @@ class SparkTransformer:
             .withColumn("updated_at", F.current_timestamp())
         )
 
-        unchanged      = existing_dim.join(changed_keys, on="customer_bk", how="left_anti")
-        new_customers  = staged.join(
+        unchanged = existing_dim.join(changed_keys, on="customer_bk", how="left_anti")
+        new_customers = staged.join(
             existing_dim.filter(F.col("is_current") == True).select("customer_bk"),
-            on="customer_bk", how="left_anti"
+            on="customer_bk",
+            how="left_anti",
         )
         updated_customers = staged.join(changed_keys, on="customer_bk", how="inner")
 
-        return unchanged.unionByName(expired) \
-                        .unionByName(new_customers) \
-                        .unionByName(updated_customers)
+        return (
+            unchanged.unionByName(expired).unionByName(new_customers).unionByName(updated_customers)
+        )
 
     # -------------------------------------------------------------------------
     # PRODUCT DIMENSION — SCD Type 2
@@ -237,8 +225,7 @@ class SparkTransformer:
         logger.info("Transforming dim_product (SCD Type 2)...")
 
         staged = (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("PRODUCT_ID").cast(StringType()).alias("product_bk"),
                 F.col("PRODUCT_NM").alias("product_name"),
                 F.col("FAMILY_CD").alias("product_family_code"),
@@ -263,21 +250,19 @@ class SparkTransformer:
 
         # Identify changed records
         changed_keys = (
-            existing_dim
-            .filter(F.col("is_current") == True)
+            existing_dim.filter(F.col("is_current") == True)
             .join(staged, on="product_bk", how="inner")
             .filter(
-                (existing_dim["product_name"] != staged["product_name"]) |
-                (existing_dim["isin_code"] != staged["isin_code"]) |
-                (existing_dim["is_active"] != staged["is_active"])
+                (existing_dim["product_name"] != staged["product_name"])
+                | (existing_dim["isin_code"] != staged["isin_code"])
+                | (existing_dim["is_active"] != staged["is_active"])
             )
             .select(existing_dim["product_bk"])
         )
 
         # Expire old current records
         expired = (
-            existing_dim
-            .join(changed_keys, on="product_bk", how="inner")
+            existing_dim.join(changed_keys, on="product_bk", how="inner")
             .withColumn("valid_to", F.date_sub(F.current_date(), 1))
             .withColumn("is_current", F.lit(False))
             .withColumn("updated_at", F.current_timestamp())
@@ -296,9 +281,9 @@ class SparkTransformer:
         # Changed products → insert new version
         updated_products = staged.join(changed_keys, on="product_bk", how="inner")
 
-        return unchanged.unionByName(expired) \
-                        .unionByName(new_products) \
-                        .unionByName(updated_products)
+        return (
+            unchanged.unionByName(expired).unionByName(new_products).unionByName(updated_products)
+        )
 
     # -------------------------------------------------------------------------
     # FACT TABLE
@@ -320,8 +305,7 @@ class SparkTransformer:
         current_products = dim_product.filter(F.col("is_current") == True)
 
         fact = (
-            raw_df
-            .select(
+            raw_df.select(
                 F.col("TXN_ID").alias("transaction_bk"),
                 F.to_date(F.col("TXN_DT"), "yyyyMMdd").alias("txn_date"),
                 F.col("CUST_ID").alias("customer_bk"),
@@ -342,8 +326,7 @@ class SparkTransformer:
             .withColumn(
                 "_rn",
                 F.row_number().over(
-                    Window.partitionBy("transaction_bk")
-                          .orderBy(F.col("txn_date").desc())
+                    Window.partitionBy("transaction_bk").orderBy(F.col("txn_date").desc())
                 ),
             )
             .filter(F.col("_rn") == 1)
@@ -360,16 +343,17 @@ class SparkTransformer:
 
         # Join surrogate keys
         fact = (
-            fact
-            .join(
+            fact.join(
                 current_customers.select(
                     F.col("customer_bk"), F.col("customer_sk"), F.col("city_sk")
                 ),
-                on="customer_bk", how="left",
+                on="customer_bk",
+                how="left",
             )
             .join(
                 current_products.select(F.col("product_bk"), F.col("product_sk")),
-                on="product_bk", how="left",
+                on="product_bk",
+                how="left",
             )
             .drop("customer_bk", "product_bk")
             .withColumn("source_system", F.lit("ORACLE_ERP"))

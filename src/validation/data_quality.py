@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 class Severity(str, Enum):
-    CRITICAL = "CRITICAL"   # Pipeline must stop
-    WARNING  = "WARNING"    # Log and continue
-    INFO     = "INFO"       # Informational only
+    CRITICAL = "CRITICAL"  # Pipeline must stop
+    WARNING = "WARNING"  # Log and continue
+    INFO = "INFO"  # Informational only
 
 
 @dataclass
@@ -49,9 +49,7 @@ class ValidationReport:
 
     @property
     def passed(self) -> bool:
-        return all(
-            c.passed for c in self.checks if c.severity == Severity.CRITICAL
-        )
+        return all(c.passed for c in self.checks if c.severity == Severity.CRITICAL)
 
     @property
     def critical_failures(self) -> list[ValidationCheck]:
@@ -73,9 +71,9 @@ class DataQualityValidator:
     """
 
     # Acceptable thresholds
-    MAX_NULL_RATE_PK       = 0.0    # Primary/business keys must never be null
-    MAX_NULL_RATE_FK       = 0.005  # Foreign keys: max 0.5% unresolved
-    MAX_AMOUNT_VARIANCE    = 0.001  # Reconciliation: max 0.1% total amount variance
+    MAX_NULL_RATE_PK = 0.0  # Primary/business keys must never be null
+    MAX_NULL_RATE_FK = 0.005  # Foreign keys: max 0.5% unresolved
+    MAX_AMOUNT_VARIANCE = 0.001  # Reconciliation: max 0.1% total amount variance
     MAX_ROW_COUNT_VARIANCE = 0.005  # Reconciliation: max 0.5% row count variance
 
     def __init__(self, spark: SparkSession):
@@ -141,9 +139,7 @@ class DataQualityValidator:
             name=f"accepted_values:{column}",
             severity=severity,
             passed=passed,
-            message=(
-                f"Column '{column}': {invalid:,} rows with values outside {accepted}"
-            ),
+            message=(f"Column '{column}': {invalid:,} rows with values outside {accepted}"),
             failed_rows=invalid,
             total_rows=total,
         )
@@ -181,11 +177,9 @@ class DataQualityValidator:
     ) -> ValidationCheck:
         """Verify all FK values in fact_df exist in dim_df."""
         total = fact_df.count()
-        unresolved = (
-            fact_df
-            .join(dim_df.select(F.col(dim_pk).alias(fact_fk)), on=fact_fk, how="left_anti")
-            .count()
-        )
+        unresolved = fact_df.join(
+            dim_df.select(F.col(dim_pk).alias(fact_fk)), on=fact_fk, how="left_anti"
+        ).count()
         rate = unresolved / total if total > 0 else 0
         passed = rate <= max_unresolved_rate
         return ValidationCheck(
@@ -269,7 +263,6 @@ class DataQualityValidator:
         oracle_row_count: int,
         oracle_net_total: float,
     ) -> ValidationReport:
-
         report = ValidationReport(table_name="fact_transactions", batch_id=batch_id)
 
         # Layer 1 — Schema
@@ -283,9 +276,7 @@ class DataQualityValidator:
 
         # Layer 2 — Business rules
         report.checks.append(
-            self.check_accepted_values(
-                df, "transaction_type", ["BUY", "SELL", "TRANSFER"]
-            )
+            self.check_accepted_values(df, "transaction_type", ["BUY", "SELL", "TRANSFER"])
         )
         report.checks.append(
             self.check_accepted_values(
@@ -301,9 +292,7 @@ class DataQualityValidator:
         report.checks.append(
             self.check_referential_integrity(df, dim_product, "product_sk", "product_sk")
         )
-        report.checks.append(
-            self.check_referential_integrity(df, dim_time, "time_sk", "time_sk")
-        )
+        report.checks.append(self.check_referential_integrity(df, dim_time, "time_sk", "time_sk"))
 
         # Layer 3 — Reconciliation
         target_count = df.count()
@@ -312,7 +301,9 @@ class DataQualityValidator:
             self.reconcile_row_counts(oracle_row_count, target_count, "fact_transactions")
         )
         report.checks.append(
-            self.reconcile_amounts(oracle_net_total, float(target_net_total), "net_amount", "fact_transactions")
+            self.reconcile_amounts(
+                oracle_net_total, float(target_net_total), "net_amount", "fact_transactions"
+            )
         )
 
         logger.info(report.summary())

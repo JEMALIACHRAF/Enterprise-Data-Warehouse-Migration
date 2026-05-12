@@ -17,6 +17,7 @@ from pathlib import Path
 # Charge .env depuis la racine du projet
 try:
     from dotenv import load_dotenv
+
     load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 except ImportError:
     pass
@@ -34,26 +35,26 @@ from pyspark.sql import functions as F
 
 # ── Config depuis variables d'environnement ───────────────────────────────────
 
-ORACLE_HOST     = os.environ.get("ORACLE_HOST", "localhost")
-ORACLE_PORT     = os.environ.get("ORACLE_PORT", "1521")
-ORACLE_SERVICE  = os.environ.get("ORACLE_SERVICE", "XEPDB1")
-ORACLE_USER     = os.environ.get("ORACLE_USER", "migration_reader")
+ORACLE_HOST = os.environ.get("ORACLE_HOST", "localhost")
+ORACLE_PORT = os.environ.get("ORACLE_PORT", "1521")
+ORACLE_SERVICE = os.environ.get("ORACLE_SERVICE", "XEPDB1")
+ORACLE_USER = os.environ.get("ORACLE_USER", "migration_reader")
 ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD", "")
 
-SF_ACCOUNT      = os.environ.get("SNOWFLAKE_ACCOUNT", "")
-SF_USER         = os.environ.get("SNOWFLAKE_USER", "migration_svc")
-SF_PASSWORD     = os.environ.get("SNOWFLAKE_PASSWORD", "")
-SF_DATABASE     = os.environ.get("SNOWFLAKE_DATABASE", "FINANCE_DWH_DEV")
-SF_SCHEMA       = os.environ.get("SNOWFLAKE_SCHEMA", "CORE")
-SF_WAREHOUSE    = os.environ.get("SNOWFLAKE_WAREHOUSE", "MIGRATION_WH")
+SF_ACCOUNT = os.environ.get("SNOWFLAKE_ACCOUNT", "")
+SF_USER = os.environ.get("SNOWFLAKE_USER", "migration_svc")
+SF_PASSWORD = os.environ.get("SNOWFLAKE_PASSWORD", "")
+SF_DATABASE = os.environ.get("SNOWFLAKE_DATABASE", "FINANCE_DWH_DEV")
+SF_SCHEMA = os.environ.get("SNOWFLAKE_SCHEMA", "CORE")
+SF_WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "MIGRATION_WH")
 
-GCS_BUCKET      = os.environ.get("GCS_BUCKET", "ton-bucket-migration-dev")
-GCS_CREDS       = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "ton-bucket-migration-dev")
+GCS_CREDS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
 
-JDBC_JAR        = os.path.abspath("drivers/ojdbc8.jar")
-BATCH_DATE      = date.today().strftime("%Y%m%d")
+JDBC_JAR = os.path.abspath("drivers/ojdbc8.jar")
+BATCH_DATE = date.today().strftime("%Y%m%d")
 
-GCS_TEST_PATH   = f"gs://{GCS_BUCKET}/tests/spark_integration/{BATCH_DATE}"
+GCS_TEST_PATH = f"gs://{GCS_BUCKET}/tests/spark_integration/{BATCH_DATE}"
 
 
 def build_spark() -> SparkSession:
@@ -62,14 +63,15 @@ def build_spark() -> SparkSession:
     pour éviter le conflit protobuf entre gcs-connector et Spark 3.4.
     """
     return (
-        SparkSession.builder
-        .master("local[4]")
+        SparkSession.builder.master("local[4]")
         .appName("test-spark-integration")
         .config("spark.sql.shuffle.partitions", "8")
         # Snowflake uniquement — GCS géré par Python SDK
-        .config("spark.jars.packages",
-                "net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4,"
-                "net.snowflake:snowflake-jdbc:3.14.4")
+        .config(
+            "spark.jars.packages",
+            "net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4,"
+            "net.snowflake:snowflake-jdbc:3.14.4",
+        )
         .config("spark.jars", JDBC_JAR)
         .getOrCreate()
     )
@@ -90,10 +92,12 @@ def test_oracle_to_gcs(spark: SparkSession) -> int:
     df = (
         spark.read.format("jdbc")
         .option("url", jdbc_url)
-        .option("dbtable",
-                "(SELECT TXN_ID, TXN_DT, CUST_ID, PROD_ID, TXN_TYPE_CD, "
-                "STATUS_CD, GROSS_AMT, NET_AMT, FEE_AMT, CURRENCY_CD, "
-                "ORA_HASH(ROWID,4) AS PART_ID FROM FACT_TXN) T")
+        .option(
+            "dbtable",
+            "(SELECT TXN_ID, TXN_DT, CUST_ID, PROD_ID, TXN_TYPE_CD, "
+            "STATUS_CD, GROSS_AMT, NET_AMT, FEE_AMT, CURRENCY_CD, "
+            "ORA_HASH(ROWID,4) AS PART_ID FROM FACT_TXN) T",
+        )
         .option("driver", "oracle.jdbc.OracleDriver")
         .option("user", ORACLE_USER)
         .option("password", ORACLE_PASSWORD)
@@ -106,7 +110,7 @@ def test_oracle_to_gcs(spark: SparkSession) -> int:
     )
 
     oracle_count = df.count()
-    oracle_net   = df.agg(F.sum("NET_AMT")).collect()[0][0] or 0
+    oracle_net = df.agg(F.sum("NET_AMT")).collect()[0][0] or 0
     print(f"  ✅  Oracle : {oracle_count} lignes lues | NET_AMT total = {oracle_net:,.2f}")
 
     # Écriture locale d'abord
@@ -136,6 +140,7 @@ def test_gcs_transform(spark: SparkSession) -> object:
     print("\n── ÉTAPE 2 : GCS → Transformation PySpark ────────────────")
 
     import tempfile
+
     local_path = os.path.join(tempfile.gettempdir(), "spark_gcs_test")
     df = spark.read.parquet(local_path)
     gcs_count = df.count()
@@ -143,23 +148,29 @@ def test_gcs_transform(spark: SparkSession) -> object:
 
     # Transformations
     transformed = (
-        df
-        .withColumn("transaction_bk",  F.col("TXN_ID"))
+        df.withColumn("transaction_bk", F.col("TXN_ID"))
         .withColumn("transaction_type", F.col("TXN_TYPE_CD"))
         .withColumn("transaction_status", F.col("STATUS_CD"))
-        .withColumn("gross_amount",     F.col("GROSS_AMT").cast("decimal(18,4)"))
-        .withColumn("net_amount",       F.col("NET_AMT").cast("decimal(18,4)"))
-        .withColumn("fee_amount",       F.col("FEE_AMT").cast("decimal(18,4)"))
-        .withColumn("currency_code",    F.col("CURRENCY_CD"))
-        .withColumn("time_sk",
-            F.regexp_replace(F.col("TXN_DT"), "-", "").cast("int"))
-        .withColumn("source_system",    F.lit("ORACLE_ERP"))
-        .withColumn("batch_id",         F.lit(f"TEST_{BATCH_DATE}"))
-        .withColumn("loaded_at",        F.current_timestamp())
+        .withColumn("gross_amount", F.col("GROSS_AMT").cast("decimal(18,4)"))
+        .withColumn("net_amount", F.col("NET_AMT").cast("decimal(18,4)"))
+        .withColumn("fee_amount", F.col("FEE_AMT").cast("decimal(18,4)"))
+        .withColumn("currency_code", F.col("CURRENCY_CD"))
+        .withColumn("time_sk", F.regexp_replace(F.col("TXN_DT"), "-", "").cast("int"))
+        .withColumn("source_system", F.lit("ORACLE_ERP"))
+        .withColumn("batch_id", F.lit(f"TEST_{BATCH_DATE}"))
+        .withColumn("loaded_at", F.current_timestamp())
         .select(
-            "transaction_bk", "transaction_type", "transaction_status",
-            "gross_amount", "net_amount", "fee_amount",
-            "currency_code", "time_sk", "source_system", "batch_id", "loaded_at"
+            "transaction_bk",
+            "transaction_type",
+            "transaction_status",
+            "gross_amount",
+            "net_amount",
+            "fee_amount",
+            "currency_code",
+            "time_sk",
+            "source_system",
+            "batch_id",
+            "loaded_at",
         )
     )
 
@@ -174,22 +185,28 @@ def test_load_to_snowflake(spark: SparkSession, df) -> None:
     print("\n── ÉTAPE 3 : PySpark → Snowflake ─────────────────────────")
 
     sf_options = {
-        "sfURL":       f"{SF_ACCOUNT}.snowflakecomputing.com",
-        "sfUser":      SF_USER,
-        "sfPassword":  SF_PASSWORD,
-        "sfDatabase":  SF_DATABASE,
-        "sfSchema":    SF_SCHEMA,
+        "sfURL": f"{SF_ACCOUNT}.snowflakecomputing.com",
+        "sfUser": SF_USER,
+        "sfPassword": SF_PASSWORD,
+        "sfDatabase": SF_DATABASE,
+        "sfSchema": SF_SCHEMA,
         "sfWarehouse": SF_WAREHOUSE,
-        "dbtable":     "FACT_TRANSACTIONS_TEST",   # table de test séparée
+        "dbtable": "FACT_TRANSACTIONS_TEST",  # table de test séparée
     }
 
     # Crée la table de test si nécessaire
     import snowflake.connector
+
     conn = snowflake.connector.connect(
-        account=SF_ACCOUNT, user=SF_USER, password=SF_PASSWORD,
-        database=SF_DATABASE, schema=SF_SCHEMA, warehouse=SF_WAREHOUSE
+        account=SF_ACCOUNT,
+        user=SF_USER,
+        password=SF_PASSWORD,
+        database=SF_DATABASE,
+        schema=SF_SCHEMA,
+        warehouse=SF_WAREHOUSE,
     )
-    conn.cursor().execute("""
+    conn.cursor().execute(
+        """
         CREATE TABLE IF NOT EXISTS FACT_TRANSACTIONS_TEST (
             transaction_bk      VARCHAR,
             transaction_type    VARCHAR,
@@ -203,15 +220,12 @@ def test_load_to_snowflake(spark: SparkSession, df) -> None:
             batch_id            VARCHAR,
             loaded_at           TIMESTAMP_NTZ
         )
-    """)
+    """
+    )
     conn.commit()
     conn.close()
 
-    df.write \
-      .format("net.snowflake.spark.snowflake") \
-      .options(**sf_options) \
-      .mode("overwrite") \
-      .save()
+    df.write.format("net.snowflake.spark.snowflake").options(**sf_options).mode("overwrite").save()
 
     print(f"  ✅  Écriture Snowflake OK → {SF_DATABASE}.{SF_SCHEMA}.FACT_TRANSACTIONS_TEST")
 
@@ -221,9 +235,14 @@ def test_reconciliation(spark: SparkSession, oracle_count: int) -> None:
     print("\n── ÉTAPE 4 : Réconciliation Oracle ↔ Snowflake ───────────")
 
     import snowflake.connector
+
     conn = snowflake.connector.connect(
-        account=SF_ACCOUNT, user=SF_USER, password=SF_PASSWORD,
-        database=SF_DATABASE, schema=SF_SCHEMA, warehouse=SF_WAREHOUSE
+        account=SF_ACCOUNT,
+        user=SF_USER,
+        password=SF_PASSWORD,
+        database=SF_DATABASE,
+        schema=SF_SCHEMA,
+        warehouse=SF_WAREHOUSE,
     )
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*), SUM(NET_AMOUNT) FROM FACT_TRANSACTIONS_TEST")
@@ -245,13 +264,18 @@ def test_reconciliation(spark: SparkSession, oracle_count: int) -> None:
 
 
 def run_all_tests():
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  TEST INTÉGRATION SPARK — Oracle → GCS → Snowflake")
-    print("="*60)
+    print("=" * 60)
 
     missing = []
-    for var in ["ORACLE_PASSWORD", "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_PASSWORD",
-                "GCS_BUCKET", "GOOGLE_APPLICATION_CREDENTIALS"]:
+    for var in [
+        "ORACLE_PASSWORD",
+        "SNOWFLAKE_ACCOUNT",
+        "SNOWFLAKE_PASSWORD",
+        "GCS_BUCKET",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+    ]:
         if not os.environ.get(var):
             missing.append(var)
 
@@ -271,7 +295,7 @@ def run_all_tests():
     print(f"  ✅  Spark {spark.version} démarré")
 
     oracle_count = test_oracle_to_gcs(spark)
-    transformed  = test_gcs_transform(spark)
+    transformed = test_gcs_transform(spark)
     test_load_to_snowflake(spark, transformed)
     test_reconciliation(spark, oracle_count)
 

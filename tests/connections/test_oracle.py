@@ -15,6 +15,7 @@ from pathlib import Path
 # Charge .env depuis la racine du projet
 try:
     from dotenv import load_dotenv
+
     load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 except ImportError:
     pass
@@ -33,7 +34,9 @@ def check_driver():
         print(f"❌  Driver JDBC introuvable : {JDBC_DRIVER_PATH}")
         print("    → Télécharge-le :")
         print("      mkdir -p drivers && curl -L -o drivers/ojdbc8.jar \\")
-        print('        "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/21.9.0.0/ojdbc8-21.9.0.0.jar"')
+        print(
+            '        "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/21.9.0.0/ojdbc8-21.9.0.0.jar"'
+        )
         return False
     print(f"✅  Driver JDBC trouvé : {JDBC_DRIVER_PATH}")
     return True
@@ -44,7 +47,8 @@ def check_docker_oracle():
     try:
         result = subprocess.run(
             ["docker", "inspect", "--format", "{{.State.Status}}", "oracle-dev"],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
         status = result.stdout.strip()
         if status == "running":
@@ -59,27 +63,22 @@ def check_docker_oracle():
 
 
 def get_connection():
-    host    = os.environ.get("ORACLE_HOST", "localhost")
-    port    = os.environ.get("ORACLE_PORT", "1521")
+    host = os.environ.get("ORACLE_HOST", "localhost")
+    port = os.environ.get("ORACLE_PORT", "1521")
     service = os.environ.get("ORACLE_SERVICE", "XEPDB1")
-    user    = os.environ.get("ORACLE_USER", "migration_reader")
+    user = os.environ.get("ORACLE_USER", "migration_reader")
     password = os.environ["ORACLE_PASSWORD"]
 
     jdbc_url = f"jdbc:oracle:thin:@//{host}:{port}/{service}"
     print(f"  → URL JDBC : {jdbc_url}")
 
-    return jaydebeapi.connect(
-        JDBC_DRIVER_CLASS,
-        jdbc_url,
-        [user, password],
-        JDBC_DRIVER_PATH
-    )
+    return jaydebeapi.connect(JDBC_DRIVER_CLASS, jdbc_url, [user, password], JDBC_DRIVER_PATH)
 
 
 def test_oracle_connection():
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  TEST CONNEXION — Oracle")
-    print("="*60)
+    print("=" * 60)
 
     if not os.environ.get("ORACLE_PASSWORD"):
         print("❌  ORACLE_PASSWORD non défini dans .env")
@@ -93,7 +92,7 @@ def test_oracle_connection():
     # ── 1. Connexion ─────────────────────────────────────────────
     try:
         conn = get_connection()
-        cur  = conn.cursor()
+        cur = conn.cursor()
         print("✅  Connexion JDBC Oracle établie")
     except Exception as e:
         print(f"❌  Connexion échouée : {e}")
@@ -109,13 +108,8 @@ def test_oracle_connection():
         print(f"✅  Version Oracle : {row[0]}")
 
     # ── 3. Vérifier les tables sources ────────────────────────────
-    expected_tables = [
-        "LKP_CONTINENT", "LKP_COUNTRY", "LKP_REGION",
-        "LKP_CITY", "FACT_TXN"
-    ]
-    cur.execute(
-        "SELECT TABLE_NAME FROM USER_TABLES ORDER BY TABLE_NAME"
-    )
+    expected_tables = ["LKP_CONTINENT", "LKP_COUNTRY", "LKP_REGION", "LKP_CITY", "FACT_TXN"]
+    cur.execute("SELECT TABLE_NAME FROM USER_TABLES ORDER BY TABLE_NAME")
     existing = {row[0] for row in cur.fetchall()}
 
     print(f"\n  Tables Oracle présentes ({len(existing)}) :")
@@ -129,7 +123,9 @@ def test_oracle_connection():
 
     if not all_present:
         print("\n  ⚠️  Tables manquantes → exécute le SQL de setup :")
-        print("    docker exec -it oracle-dev sqlplus migration_reader/ReaderPass#2024@//localhost:1521/XEPDB1")
+        print(
+            "    docker exec -it oracle-dev sqlplus migration_reader/ReaderPass#2024@//localhost:1521/XEPDB1"
+        )
         print("    (puis colle le contenu de scripts/oracle_setup.sql)")
 
     # ── 4. Vérifier les données de test ───────────────────────────
@@ -153,12 +149,14 @@ def test_oracle_connection():
         print(f"✅  LKP_CONTINENT : {count} continents")
 
     # ── 5. Test performance / partitionnement ─────────────────────
-    cur.execute("""
+    cur.execute(
+        """
         SELECT ORA_HASH(ROWID, 20) AS PARTITION_ID, COUNT(*) AS CNT
         FROM FACT_TXN
         GROUP BY ORA_HASH(ROWID, 20)
         ORDER BY 1
-    """)
+    """
+    )
     partitions = cur.fetchall()
     print(f"\n✅  Partitionnement ROWID simulé : {len(partitions)} partition(s)")
     for p in partitions:

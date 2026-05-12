@@ -14,6 +14,7 @@ from pathlib import Path
 # Charge .env depuis la racine du projet
 try:
     from dotenv import load_dotenv
+
     load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 except ImportError:
     pass
@@ -26,9 +27,9 @@ from google.cloud.exceptions import NotFound
 
 
 def test_gcs_connection():
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  TEST CONNEXION — Google Cloud Storage")
-    print("="*60)
+    print("=" * 60)
 
     # ── 1. Vérification credentials ──────────────────────────────
     creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
@@ -59,11 +60,13 @@ def test_gcs_connection():
         return False
 
     # ── 4. Écriture d'un fichier test ─────────────────────────────
-    test_content = json.dumps({
-        "test": True,
-        "timestamp": datetime.utcnow().isoformat(),
-        "message": "oracle-snowflake-migration local test"
-    })
+    test_content = json.dumps(
+        {
+            "test": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": "oracle-snowflake-migration local test",
+        }
+    )
     blob_name = "tests/connection_test.json"
     blob = bucket.blob(blob_name)
     blob.upload_from_string(test_content, content_type="application/json")

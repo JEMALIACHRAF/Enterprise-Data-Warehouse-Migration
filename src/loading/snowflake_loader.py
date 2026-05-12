@@ -53,16 +53,16 @@ class SnowflakeLoader:
     def _build_sf_options(self) -> dict:
         sf = self.config.snowflake
         return {
-            "sfURL":        f"{sf.account}.snowflakecomputing.com",
-            "sfUser":       sf.user,
-            "sfDatabase":   sf.database,
-            "sfSchema":     sf.schema,
-            "sfWarehouse":  sf.warehouse,
-            "sfRole":       sf.role,
+            "sfURL": f"{sf.account}.snowflakecomputing.com",
+            "sfUser": sf.user,
+            "sfDatabase": sf.database,
+            "sfSchema": sf.schema,
+            "sfWarehouse": sf.warehouse,
+            "sfRole": sf.role,
             # Key-pair auth (private key injected from GCP Secret Manager)
             "pem_private_key": sf.private_key_pem,
             # Performance tuning
-            "parallelism":  "16",
+            "parallelism": "16",
             "truncate_table": "off",
         }
 
@@ -91,25 +91,23 @@ class SnowflakeLoader:
         start = datetime.utcnow()
         logger.info(f"[{batch_id}] Loading dimension → {target_table} (mode={mode})")
 
-        df_with_audit = df.withColumn("_batch_id", F.lit(batch_id)) \
-                          .withColumn("_loaded_at", F.current_timestamp())
+        df_with_audit = df.withColumn("_batch_id", F.lit(batch_id)).withColumn(
+            "_loaded_at", F.current_timestamp()
+        )
 
         row_count = df_with_audit.count()
 
         write_mode = "overwrite" if mode == "overwrite" else "append"
 
         (
-            df_with_audit.write
-            .format(self.SNOWFLAKE_FORMAT)
+            df_with_audit.write.format(self.SNOWFLAKE_FORMAT)
             .options(**self._options_for_table(target_table))
             .mode(write_mode)
             .save()
         )
 
         duration = (datetime.utcnow() - start).total_seconds()
-        logger.info(
-            f"[{batch_id}] ✅ {target_table}: {row_count:,} rows loaded in {duration:.1f}s"
-        )
+        logger.info(f"[{batch_id}] ✅ {target_table}: {row_count:,} rows loaded in {duration:.1f}s")
         return LoadResult(
             table_name=target_table,
             rows_loaded=row_count,
@@ -134,9 +132,7 @@ class SnowflakeLoader:
         logger.info(f"[{batch_id}] Loading fact → {target_table}")
 
         # Split valid / quarantine
-        valid_df = df.filter(
-            F.col("customer_sk").isNotNull() & F.col("product_sk").isNotNull()
-        )
+        valid_df = df.filter(F.col("customer_sk").isNotNull() & F.col("product_sk").isNotNull())
         quarantine_df = df.filter(
             F.col("customer_sk").isNull() | F.col("product_sk").isNull()
         ).withColumn("quarantine_reason", F.lit("UNRESOLVED_FK"))
@@ -146,8 +142,7 @@ class SnowflakeLoader:
 
         # Load valid rows
         (
-            valid_df.write
-            .format(self.SNOWFLAKE_FORMAT)
+            valid_df.write.format(self.SNOWFLAKE_FORMAT)
             .options(**self._options_for_table(target_table))
             .mode("append")
             .save()
@@ -159,8 +154,7 @@ class SnowflakeLoader:
                 f"[{batch_id}] ⚠️  {quarantine_count:,} rows quarantined → {quarantine_table}"
             )
             (
-                quarantine_df.write
-                .format(self.SNOWFLAKE_FORMAT)
+                quarantine_df.write.format(self.SNOWFLAKE_FORMAT)
                 .options(**self._options_for_table(quarantine_table))
                 .mode("append")
                 .save()
@@ -182,10 +176,9 @@ class SnowflakeLoader:
 
     def execute_sql(self, sql: str) -> None:
         """Run arbitrary SQL on Snowflake (post-load DML, swaps, etc.)."""
-        self.spark.read \
-            .format(self.SNOWFLAKE_FORMAT) \
-            .options(**{**self._sf_options, "query": sql}) \
-            .load()
+        self.spark.read.format(self.SNOWFLAKE_FORMAT).options(
+            **{**self._sf_options, "query": sql}
+        ).load()
 
     def swap_tables(self, staging_table: str, production_table: str) -> None:
         """Atomic swap: staging → production (zero-downtime load pattern)."""
