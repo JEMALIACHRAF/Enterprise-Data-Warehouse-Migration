@@ -174,7 +174,7 @@ jobs:
     name: Build Docker Image
     runs-on: ubuntu-latest
     needs: [unit-tests, security]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.GCP_SA_KEY != ''
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -231,7 +231,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment: staging
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.GCP_SA_KEY != ''
 
     steps:
       - name: Checkout
@@ -288,7 +288,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy-staging
     environment: production
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.GCP_SA_KEY != ''
 
     steps:
       - name: Checkout
@@ -361,7 +361,7 @@ jobs:
   manual-deploy:
     name: Manual Deploy
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && secrets.GCP_SA_KEY != ''
     environment: ${{ github.event.inputs.environment }}
 
     steps:
