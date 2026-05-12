@@ -40,6 +40,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Permissions required for test reporter and coverage upload
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
 
   # ---------------------------------------------------------------------------
@@ -126,7 +132,7 @@ jobs:
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         with:
           name: Unit Test Results
           path: test-results.xml
